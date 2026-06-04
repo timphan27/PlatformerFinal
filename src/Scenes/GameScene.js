@@ -384,12 +384,12 @@ class GameScene extends Phaser.Scene {
             this.platformsLayer
         );
 
-         this.physics.add.collider( //enemies should also collide with moving platforms so they can walk on them
+        this.physics.add.collider( //enemies should also collide with moving platforms so they can walk on them
             this.enemies,
             this.movingPlatforms
         );
 
-        //player overlap with enemies
+        //player overlap with enemies (overlap + manual separation avoids physics pushing bodies through platforms)
         this.physics.add.overlap(
             this.player,
             this.enemies,
@@ -565,13 +565,19 @@ class GameScene extends Phaser.Scene {
 
         if (!this.movingPlatforms) return;
 
+        this.enemies.children.iterate(enemy => {
+            if (!enemy || !enemy.active) return;
+            enemy._onMovingPlatform = false;
+            enemy._platform = null;
+        });
+
         let playerOnPlatform = false;
         let playerPlatform = null;
 
         this.movingPlatforms.children.iterate(platform => {
 
-            const deltaX = platform.x - platform.prevX;
-            const delta = this.game.loop.delta / 1000;
+            platform.deltaX = platform.x - platform.prevX;
+            platform.deltaY = platform.y - platform.prevY;
 
             const playerBottom = this.player.y + this.player.height / 2;
             const platformTop = platform.y - platform.height / 2;
@@ -594,7 +600,6 @@ class GameScene extends Phaser.Scene {
 
                 if (enemyOnTop && enemy.body.blocked.down) {
                     if (!enemy._onMovingPlatform) {
-                        // First time landing on platform, set the offset
                         enemy._platformOffset = enemy.x - platform.x;
                     }
                     enemy._onMovingPlatform = true;
@@ -613,7 +618,7 @@ class GameScene extends Phaser.Scene {
             }
 
             const delta = this.game.loop.delta / 1000;
-            const platformVelocityX = delta > 0 ? (playerPlatform.x - playerPlatform.prevX) / delta : 0;
+            const platformVelocityX = delta > 0 ? playerPlatform.deltaX / delta : 0;
 
             if (!this.keys.left.isDown && !this.keys.right.isDown) {
                 this.player.x = playerPlatform.x + this._playerPlatformOffset;
@@ -629,11 +634,6 @@ class GameScene extends Phaser.Scene {
             this._wasOnPlatform = false;
             this._lastPlatform = null;
         }
-
-        this.enemies.children.iterate(enemy => {
-            if (!enemy || !enemy.active) return;
-            enemy._onMovingPlatform = false;
-        });
     }
 
     handleInvincibility() {
@@ -914,7 +914,7 @@ class GameScene extends Phaser.Scene {
             levels.indexOf(currentLevel);
 
         //return next level if it exists
-        if (currentIndex < levels.length - 1) { 
+        if (currentIndex < levels.length - 1) {
 
             return levels[currentIndex + 1]; //return next level in array if current level is not last one
         }
@@ -1075,7 +1075,7 @@ class GameScene extends Phaser.Scene {
                     });
                 }
 
-                if (blockedByTile || blockedByPlatform) {
+                if (blockedByTile || blockedByPlatform) { // if there's something above the player's head, don't allow them to stand up and exit crouch
                     return;
                 }
 
@@ -1096,50 +1096,73 @@ class GameScene extends Phaser.Scene {
         }
     }
 
-    handleEnemyMovement() { //TODO: handle movement on moving platforms
+    handleEnemyMovement() {
 
-        const dt = this.game.loop.delta / 1000;
+        this.enemies.children.iterate(enemy => { //loop through every enemy in the scene
 
-        this.enemies.children.iterate(enemy => { //iterate through enemies to apply movement and ledge detection
+            if (!enemy || !enemy.active) return; //check if enemy is invalid
 
-            if (!enemy || !enemy.active) return;
+            enemy.setVelocityX(enemy.direction * enemy.speed); //direction = -1 (left) or 1 (right)
 
-                enemy.setVelocityX(enemy.direction * enemy.speed);
-
-                const isOnGround = enemy.body.blocked.down;
-                const blockedLeft = enemy.body.blocked.left;
-                const blockedRight = enemy.body.blocked.right;
-
-                let flipped = false;
-
-                if (blockedLeft || blockedRight) {
-                    enemy.direction *= -1;
-                    flipped = true;
-                } else if (!isOnGround || enemy.x <= 0 || enemy.x >= this.map.widthInPixels) {
-                    enemy.direction *= -1;
-                    flipped = true;
-                } else {
-                    const tileBelow = this.platformsLayer.getTileAtWorldXY(
-                        enemy.x + (enemy.direction * 10),
-                        enemy.y + enemy.height / 2 + 5
-                    );
-                    if (!tileBelow) {
-                        enemy.direction *= -1;
-                        flipped = true;
-                    }
-                }
-
-                if (flipped) { //`only flip sprite if direction changed to avoid unnecessary flips when on moving platform
-                    enemy.setFlip(enemy.direction > 0, false);
-                }
             
+            const dir = enemy.direction;
+            const aheadX = enemy.x + dir * (enemy.width / 2 + 2); //x pos in front of enemy's feet, check for ledges
+            const probeY = enemy.y + enemy.height / 2 + 4; //point slightly below enemy, used to check if there is ground in front
 
-            enemy._wasOnMovingPlatform = enemy._onMovingPlatform;
-            enemy._onMovingPlatform = false;
+            //ledge detection -----------
+            let groundAhead = false; //assume no ground ahead until we find some
+
+            // tile ground check (ledge detection)
+            const tileAheadDown = this.platformsLayer.getTileAtWorldXY(
+                aheadX,
+                probeY
+            );
+
+            if (tileAheadDown) { //check if there are tiles ahead
+                groundAhead = true;
+            }
+
+            // moving platform check
+            this.movingPlatforms.children.iterate(platform => { //
+                if (!platform || groundAhead) return;
+
+                const left = platform.x - platform.width / 2;
+                const right = platform.x + platform.width / 2;
+                const top = platform.y - platform.height / 2;
+
+                const onPlatform =
+                    aheadX > left &&
+                    aheadX < right &&
+                    probeY >= top &&
+                    probeY <= top + 10;
+
+                if (onPlatform) {
+                    groundAhead = true;
+                }
+            });
+
+           
+
+            
+            const tileAhead = this.platformsLayer.getTileAtWorldXY(
+                aheadX,
+                enemy.y
+            );
+
+            const blockedByWall = !!tileAhead;
+
+            if (blockedByWall || !groundAhead) {
+                enemy.direction *= -1;
+                enemy.setFlip(enemy.direction > 0, false);
+            }
+
+            if (enemy._onMovingPlatform && enemy._platform) {
+                enemy.x += enemy._platform.deltaX;
+            }
         });
     }
 
-    handleLevelSelect() {
+    handleLevelSelect() { //check for level select key presses for testing purposes
 
         const levels = ["level1", "level2", "level3"];
 
@@ -1153,7 +1176,7 @@ class GameScene extends Phaser.Scene {
 
                 this.cameras.main.once('camerafadeoutcomplete', () => {
 
-                    this.scene.restart({
+                    this.scene.restart({ 
                         levelKey: targetLevel, //restart scene with target level as new levelKey, and next level based on target level
                         nextLevel: this.getNextLevel(targetLevel) //use getNextLevel function to determine next level based on target level
                     });
@@ -1164,39 +1187,47 @@ class GameScene extends Phaser.Scene {
         }
     }
 
-    handlePlayerEnemyCollision(player, enemy) { //if player collides with enemy, check if player is jumping on top or hitting from the side, and apply damage or kill enemy accordingly
+    handlePlayerEnemyCollision(player, enemy) {
 
         if (!enemy.active) return;
 
-        // Check if player is standing on top of enemy
         const playerBottom = player.y + player.height / 2;
         const enemyTop = enemy.y - enemy.height / 2;
         const isPlayerOnTop = playerBottom < enemyTop + 10 && player.body.velocity.y >= 0;
 
         if (enemy.spike === true) {
-            // Spiked enemy always damages the player
-            if (!this.isInvincible) { // Player takes damage if not invincible
-                this.takeDamage(player, null); // Call takeDamage function to apply damage to player
+            if (!this.isInvincible) {
+                this.takeDamage(player, null);
+                const dir = player.x < enemy.x ? -1 : 1;
+                player.setVelocityX(dir * 200);
+                player.setVelocityY(-150);
             }
         } else {
-            // Non-spiked enemy: player can kill it if jumping on it
-            if (isPlayerOnTop) {
-                // Kill the enemy
-
-                 this.sound.play("enemyHit", { // Play enemy death sound
-                volume: 0.25
-            });
+            if (isPlayerOnTop) { //if player is above enemy and falling onto it, destroy enemy instead of damaging player
+                this.sound.play("enemyHit", { //play enemy hit sound
+                    volume: 0.25
+                });
                 enemy.setActive(false);
                 enemy.setVisible(false);
                 enemy.body.enable = false;
                 enemy.destroy();
-                
-                // Bounce player slightly
                 player.setVelocityY(-150);
-            } else if (!this.isInvincible) {
-                // Player takes damage if hitting from the side or below
+                return;
+            } else if (!this.isInvincible) { //if player is not on top, damage player as normal
                 this.takeDamage(player, null);
+                const dir = player.x < enemy.x ? -1 : 1; //knockback player away from enemy, direction based on which side of the enemy the player is on
+                player.setVelocityX(dir * 200); //knockback speed
+                player.setVelocityY(-150);//knockback upwards
             }
+        }
+
+        // Manually separate player from enemy to prevent overlapping,
+        // which would break moving-platform tracking for both bodies.
+        // Only separate horizontally for side collisions.
+        if (!isPlayerOnTop) {
+            const dir = player.x < enemy.x ? -1 : 1;
+            const minDist = (player.width + enemy.width) / 2;
+            player.x = enemy.x + dir * minDist;
         }
     }
 }
