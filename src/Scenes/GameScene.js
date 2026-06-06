@@ -563,7 +563,7 @@
 
         handleMovingPlatforms() {
 
-            if (!this.movingPlatforms) return;
+            if (!this.movingPlatforms) return; //   if there are no moving platforms, skip this function
 
             this.enemies.children.iterate(enemy => {
                 if (!enemy || !enemy.active) return;
@@ -576,8 +576,8 @@
 
             this.movingPlatforms.children.iterate(platform => {
 
-                platform.deltaX = platform.x - platform.prevX;
-                platform.deltaY = platform.y - platform.prevY;
+                platform.deltaX = platform.x - platform.prevX; //calculate how much platform has moved since last frame, used to move player and enemies along with platform
+                platform.deltaY = platform.y - platform.prevY; //same for vertical movement, used for vertical moving platforms
 
                 const playerBottom = this.player.y + this.player.height / 2;
                 const platformTop = platform.y - platform.height / 2;
@@ -590,8 +590,8 @@
                     playerPlatform = platform;
                 }
 
-                this.enemies.children.iterate(enemy => {
-                    if (!enemy || !enemy.active) return;
+                this.enemies.children.iterate(enemy => { //check if each enemy is standing on this platform, if so set flags to move with platform
+                    if (!enemy || !enemy.active) return; //check if enemy is valid
 
                     const enemyBottom = enemy.y + enemy.height / 2;
                     const enemyOnTop = Math.abs(enemyBottom - platformTop) < 4
@@ -611,10 +611,10 @@
                 platform.prevY = platform.y;
             });
 
-            if (playerOnPlatform && playerPlatform) {
+            if (playerOnPlatform && playerPlatform) { //if player is on a moving platform, adjust player position based on platform movement
                 const firstLanding = !this._wasOnPlatform || this._lastPlatform !== playerPlatform;
-                if (firstLanding) {
-                    this._playerPlatformOffset = this.player.x - playerPlatform.x;
+                if (firstLanding) {//if player just landed on platform, store offset between player and platform to maintain consistent position on moving platform
+                    this._playerPlatformOffset = this.player.x - playerPlatform.x; //store initial offset when player first lands on platform
                 }
 
                 const delta = this.game.loop.delta / 1000;
